@@ -1,0 +1,186 @@
+import java.io.Serializable;
+
+public class Producto implements Serializable {
+    private int id;
+    private String nombre;
+    private double precio;
+    private int cantidadDisponible;
+
+    public Producto(int id, String nombre, double precio, int cantidadDisponible) {
+        this.id = id;
+        this.nombre = nombre;
+        this.precio = precio;
+        this.cantidadDisponible = cantidadDisponible;
+    }
+
+    public int getId() {
+        return id;
+    }
+
+    public String getNombre() {
+        return nombre;
+    }
+
+    public double getPrecio() {
+        return precio;
+    }
+
+    public int getCantidadDisponible() {
+        return cantidadDisponible;
+    }
+
+    public synchronized boolean reducirCantidad(int cantidad) {
+        if (cantidadDisponible >= cantidad) {
+            cantidadDisponible -= cantidad;
+            return true;
+        }
+        return false;
+    }
+
+    @Override
+    public String toString() {
+        return "ID: " + id + " - " + nombre + " - Precio: $" + precio + " - Stock: " + cantidadDisponible;
+    }
+}
+
+
+import java.io.*;
+import java.net.*;
+import java.util.*;
+
+public class ServidorTienda {
+    private static List<Producto> productos = Collections.synchronizedList(new ArrayList<>());
+
+    public static void main(String[] args) {
+        inicializarProductos();
+
+        try (ServerSocket serverSocket = new ServerSocket(12345)) {
+            System.out.println("Servidor iniciado...");
+
+            while (true) {
+                Socket clienteSocket = serverSocket.accept();
+                new ClienteHandler(clienteSocket).start();
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+
+    private static void inicializarProductos() {
+        productos.add(new Producto(1, "Laptop", 1200.0, 10));
+        productos.add(new Producto(2, "Auriculares", 50.0, 50));
+        productos.add(new Producto(3, "Mouse", 25.0, 30));
+        // Añadir más productos si es necesario
+    }
+
+    private static class ClienteHandler extends Thread {
+        private Socket clienteSocket;
+
+        public ClienteHandler(Socket socket) {
+            this.clienteSocket = socket;
+        }
+
+        @Override
+        public void run() {
+            try (ObjectInputStream in = new ObjectInputStream(clienteSocket.getInputStream());
+                 ObjectOutputStream out = new ObjectOutputStream(clienteSocket.getOutputStream())) {
+
+                String opcion;
+                while ((opcion = (String) in.readObject()) != null) {
+                    switch (opcion) {
+                        case "1": // Buscar productos
+                            out.writeObject(productos);
+                            out.flush();
+                            break;
+                        case "2": // Comprar producto
+                            int idProducto = in.readInt();
+                            int cantidad = in.readInt();
+                            boolean exito = procesarCompra(idProducto, cantidad);
+                            out.writeBoolean(exito);
+                            out.flush();
+                            break;
+                        default:
+                            out.writeObject("Opción no válida");
+                            out.flush();
+                    }
+                }
+            } catch (IOException | ClassNotFoundException e) {
+                e.printStackTrace();
+            }
+        }
+
+        private synchronized boolean procesarCompra(int productoId, int cantidad) {
+            for (Producto producto : productos) {
+                if (producto.getId() == productoId) {
+                    return producto.reducirCantidad(cantidad);
+                }
+            }
+            return false;
+        }
+    }
+}
+
+
+
+import java.io.*;
+import java.net.*;
+import java.util.List;
+import java.util.Scanner;
+
+public class ClienteTienda {
+    public static void main(String[] args) {
+        try (Socket socket = new Socket("localhost", 12345);
+             ObjectOutputStream out = new ObjectOutputStream(socket.getOutputStream());
+             ObjectInputStream in = new ObjectInputStream(socket.getInputStream());
+             Scanner scanner = new Scanner(System.in)) {
+
+            String opcion;
+            do {
+                System.out.println("Menu:");
+                System.out.println("1. Buscar productos");
+                System.out.println("2. Realizar compra");
+                System.out.println("3. Salir");
+                System.out.print("Elige una opción: ");
+                opcion = scanner.nextLine();
+
+                out.writeObject(opcion);
+                out.flush();
+
+                switch (opcion) {
+                    case "1":
+                        List<Producto> productos = (List<Producto>) in.readObject();
+                        productos.forEach(System.out::println);
+                        break;
+                    case "2":
+                        System.out.print("Ingresa el ID del producto: ");
+                        int idProducto = Integer.parseInt(scanner.nextLine());
+                        System.out.print("Ingresa la cantidad: ");
+                        int cantidad = Integer.parseInt(scanner.nextLine());
+
+                        out.writeInt(idProducto);
+                        out.writeInt(cantidad);
+                        out.flush();
+
+                        boolean exito = in.readBoolean();
+                        if (exito) {
+                            System.out.println("Compra realizada con éxito.");
+                        } else {
+                            System.out.println("No hay suficiente stock o el producto no existe.");
+                        }
+                        break;
+                    case "3":
+                        System.out.println("Saliendo...");
+                        break;
+                    default:
+                        System.out.println("Opción no válida.");
+                        break;
+                }
+
+            } while (!opcion.equals("3"));
+
+        } catch (IOException | ClassNotFoundException e) {
+            e.printStackTrace();
+        }
+    }
+}
+
