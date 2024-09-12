@@ -1,0 +1,97 @@
+import java.io.*;
+import java.net.*;
+import java.util.*;
+import java.util.concurrent.*;
+
+public class ServidorTienda {
+    private static final int PUERTO = 12344;
+    private static final List<Producto> productos = Collections.synchronizedList(new ArrayList<>());
+    private static final int NUM_THREADS = 10;  // Número máximo de hilos en el pool
+    private static final ExecutorService threadPool = Executors.newFixedThreadPool(NUM_THREADS);
+
+    public static void main(String[] args) {
+        inicializarProductos();
+        try (ServerSocket serverSocket = new ServerSocket(PUERTO)) {
+            System.out.println("Servidor iniciado en el puerto " + PUERTO);
+            System.out.println("IP del servidor: " + InetAddress.getLocalHost().getHostAddress());
+
+            // Bucle infinito para aceptar conexiones
+            while (true) {
+                Socket clienteSocket = serverSocket.accept();
+                // Enviar el manejo de la solicitud al thread pool
+                threadPool.execute(new ClienteHandler(clienteSocket));
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+        } finally {
+            // Apagar el pool cuando se termina el servidor
+            threadPool.shutdown();
+        }
+    }
+
+    private static void inicializarProductos() {
+        productos.add(new Producto(1, "Laptop", 1200.0, 10));
+        productos.add(new Producto(2, "Auriculares", 50.0, 50));
+        // Añadir más productos si es necesario
+    }
+
+    private static class ClienteHandler implements Runnable {
+        private final Socket clienteSocket;
+
+        public ClienteHandler(Socket socket) {
+            this.clienteSocket = socket;
+        }
+
+        @Override
+        public void run() {
+            try (ObjectInputStream in = new ObjectInputStream(clienteSocket.getInputStream());
+                 ObjectOutputStream out = new ObjectOutputStream(clienteSocket.getOutputStream())) {
+                
+                String solicitud = (String) in.readObject();
+                if (solicitud.startsWith("BUSCAR")) {
+                    String[] parts = solicitud.split(" ");
+                    if (parts.length == 1) {
+                        // Buscar todos los productos
+                        out.writeObject(productos);
+                    } else if (parts.length == 2) {
+                        String criterio = parts[1];
+                        List<Producto> resultado = buscarProductos(criterio);
+                        out.writeObject(resultado);
+                    }
+                } else if (solicitud.startsWith("COMPRAR")) {
+                    String[] parts = solicitud.split(" ");
+                    int productoId = Integer.parseInt(parts[1]);
+                    int cantidad = Integer.parseInt(parts[2]);
+                    boolean resultado = procesarCompra(productoId, cantidad);
+                    out.writeObject(resultado ? "Compra realizada con éxito" : "Compra fallida");
+                }
+                
+                out.flush();
+            } catch (IOException | ClassNotFoundException e) {
+                e.printStackTrace();
+            }
+        }
+
+        private synchronized boolean procesarCompra(int productoId, int cantidad) {
+            for (Producto producto : productos) {
+                if (producto.getId() == productoId) {
+                    if (producto.getCantidadDisponible() >= cantidad) {
+                        producto.setCantidadDisponible(producto.getCantidadDisponible() - cantidad);
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+        private synchronized List<Producto> buscarProductos(String criterio) {
+            List<Producto> resultado = new ArrayList<>();
+            for (Producto producto : productos) {
+                if (producto.getNombre().toLowerCase().contains(criterio.toLowerCase()) || 
+                    String.valueOf(producto.getId()).equals(criterio)) {
+                    resultado.add(producto);
+                }
+            }
+            return resultado;
+        }
+    }
+}
